@@ -1,4 +1,14 @@
 #!/bin/bash
+set -euo pipefail
+
+cleanup() {
+    stop_chat_server 2>/dev/null || true
+    if mountpoint -q "$RAMDISK_DIR"; then
+        sudo umount "$RAMDISK_DIR" || true
+    fi
+}
+
+trap cleanup EXIT
 
 # --------------------------------------
 # Function: Display Venetian Mask
@@ -487,8 +497,12 @@ install_tor_browser() {
 # Configure RAM Disk for Ephemeral Data
 setup_ramdisk() {
     echo "Configuring RAM disk for temporary data..."
-    sudo mount -t tmpfs -o size=2G tmpfs $RAMDISK_DIR || { echo "Failed to configure RAM disk"; exit 1; }
-    echo "RAM disk mounted at $RAMDISK_DIR."
+    if mountpoint -q "$RAMDISK_DIR"; then
+        echo "RAM disk already mounted at $RAMDISK_DIR."
+    else
+        sudo mount -t tmpfs -o size=2G tmpfs "$RAMDISK_DIR" || { echo "Failed to configure RAM disk"; exit 1; }
+        echo "RAM disk mounted at $RAMDISK_DIR."
+    fi
 }
 
 # Rotate MAC Address
@@ -567,6 +581,7 @@ EOF
 # Start VPN
 start_vpn() {
     echo "Starting VPN..."
+    [ -f "$VPN_CONFIG" ] || generate_vpn_config
     sudo killall openvpn 2>/dev/null
     sudo openvpn --config "$VPN_CONFIG" --daemon || { echo "Failed to start VPN"; exit 1; }
     sleep 10
@@ -658,5 +673,6 @@ main_menu() {
 # Start Script
 # --------------------------------------
 
+display_venetian_mask
 start_chat_server
 main_menu
