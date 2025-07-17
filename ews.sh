@@ -117,6 +117,27 @@ install_dependencies() {
     echo "Dependencies installed successfully."
 }
 
+# Verify Dependencies Are Installed
+check_dependencies() {
+    local missing=()
+    local deps=(openvpn tor proxychains macchanger iptables openssl curl \
+                cron lynis clamscan python3 socat telnet gnome-terminal xterm)
+
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" >/dev/null 2>&1; then
+            missing+=("$dep")
+        fi
+    done
+
+    if (( ${#missing[@]} )); then
+        echo "Missing dependencies: ${missing[*]}"
+        echo "Select option 1 from the main menu to install them."
+        return 1
+    else
+        echo "All dependencies are present."
+    fi
+}
+
 # --------------------------------------
 # Eyes Wide Shut: IPv4 Scanner and Privacy Suite
 # --------------------------------------
@@ -646,7 +667,8 @@ main_menu() {
         echo "11. Join Another Chat Room"
         echo "12. Revert to Original Settings"
         echo "13. IPv4 Scanner"
-        echo "14. Exit"
+        echo "14. Check Dependencies"
+        echo "15. Exit"
         echo "---------------------------------"
         read -p "Choose an option: " MENU_CHOICE
         case $MENU_CHOICE in
@@ -663,7 +685,8 @@ main_menu() {
             11) join_custom_chat_room ;; 
             12) revert_to_original ;;
             13) ipv4_scanner_menu ;;
-            14) echo "Exiting. Stay anonymous!"; exit 0 ;;
+            14) check_dependencies ;;
+            15) echo "Exiting. Stay anonymous!"; exit 0 ;;
             *) echo "Invalid option. Try again." ;;
         esac
     done
