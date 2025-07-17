@@ -112,7 +112,6 @@ install_dependencies() {
 # --------------------------------------
 
 # Global Variables
-SCAN_RESULTS="$HOME/ip_scan_results.txt"
 LOG_FILE="$HOME/scan_log.txt"
 COMMON_RANGES=(
     "1.1.1.0-1.1.1.255"     # Cloudflare DNS
@@ -299,6 +298,18 @@ ping_and_invite_ips() {
 }
 
 
+
+exclude_private_ranges() {
+    if [[ ! -s "$SCAN_RESULTS" ]]; then
+        echo "No scan results to filter."
+        return
+    fi
+
+    echo "Removing private IP addresses from $SCAN_RESULTS..."
+    grep -vE "^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)" "$SCAN_RESULTS" > "${SCAN_RESULTS}.tmp"
+    mv "${SCAN_RESULTS}.tmp" "$SCAN_RESULTS"
+    echo "Private IPs removed."
+}
 
 # Start Chat Session
 start_chat_session() {
@@ -649,4 +660,3 @@ main_menu() {
 
 start_chat_server
 main_menu
-ipv4_scanner_menu
