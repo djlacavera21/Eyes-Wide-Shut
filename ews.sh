@@ -462,10 +462,12 @@ start_chat_server() {
 # Enter Chat Room with Nickname
 open_chat_client() {
     read -p "Enter your nickname: " NICKNAME
-    echo "Connecting to the chat room as $NICKNAME..."
-    
+    read -p "Enter the IP address of the chat room [127.0.0.1]: " CHAT_IP
+    CHAT_IP=${CHAT_IP:-127.0.0.1}
+    echo "Connecting to the chat room at $CHAT_IP as $NICKNAME..."
+
     # Custom dark theme
-    COMMAND="telnet 127.0.0.1 $CHAT_PORT | tee >(sed \"s/^/[$NICKNAME] /g\")"
+    COMMAND="telnet $CHAT_IP $CHAT_PORT | tee >(sed \"s/^/[$NICKNAME] /g\")"
     
     if command -v gnome-terminal >/dev/null 2>&1; then
         gnome-terminal -- bash -c "echo -e '\033]10;#FFFFFF\007\033]11;#000000\007'; $COMMAND"
