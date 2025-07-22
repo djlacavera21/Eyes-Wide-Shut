@@ -113,7 +113,7 @@ install_dependencies() {
     echo "Installing required tools and dependencies..."
     sudo apt update
     sudo apt install -y openvpn tor proxychains macchanger iptables openssl curl \
-                        cron lynis clamav python3 python3-pip socat telnet gnome-terminal xterm
+                        cron lynis clamav python3 python3-pip socat telnet gnome-terminal xterm nmap
     echo "Dependencies installed successfully."
 }
 
@@ -121,7 +121,7 @@ install_dependencies() {
 check_dependencies() {
     local missing=()
     local deps=(openvpn tor proxychains macchanger iptables openssl curl \
-                cron lynis clamscan python3 socat telnet gnome-terminal xterm)
+                cron lynis clamscan python3 socat telnet gnome-terminal xterm nmap)
 
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" >/dev/null 2>&1; then
@@ -328,6 +328,19 @@ ping_and_invite_ips() {
     echo "Finished pinging and inviting IPs."
 }
 
+# Discover chat rooms by scanning a network range
+chat_room_discovery() {
+    read -p "Enter network range to scan (e.g., 192.168.1.0/24): " DISC_RANGE
+    [ -z "$DISC_RANGE" ] && { echo "No range provided."; return; }
+    echo "Scanning $DISC_RANGE for chat rooms on port $CHAT_PORT..."
+    nmap -p $CHAT_PORT --open "$DISC_RANGE" -oG - | awk '/open/ {print $2}' > "$HOME/chat_rooms.txt"
+    if [ -s "$HOME/chat_rooms.txt" ]; then
+        echo "Available chat rooms:" && cat "$HOME/chat_rooms.txt"
+    else
+        echo "No chat rooms found."
+    fi
+}
+
 
 
 exclude_private_ranges() {
@@ -347,8 +360,16 @@ start_chat_session() {
     local ip="$1"
     local nickname="$2"
 
-    # Open a chat window with the user
-    CHAT_CMD="socat - TCP:$ip:4444 | tee >(sed \"s/^/[$nickname] /g\")"
+    local response
+    response=$(echo | timeout 3 socat - TCP:$ip:$CHAT_PORT 2>/dev/null | head -n 1)
+    if [[ "$response" == "PASSWORD_REQUIRED" ]]; then
+        read -s -p "Enter chat room password: " CHAT_PASS
+        echo
+        CHAT_CMD="(echo \"$CHAT_PASS\"; cat) | socat - TCP:$ip:$CHAT_PORT | tee >(sed \"s/^/[$nickname] /g\")"
+    else
+        CHAT_CMD="socat - TCP:$ip:$CHAT_PORT | tee >(sed \"s/^/[$nickname] /g\")"
+    fi
+
     if command -v gnome-terminal >/dev/null 2>&1; then
         gnome-terminal -- bash -c "$CHAT_CMD"
     elif command -v xterm >/dev/null 2>&1; then
@@ -452,11 +473,35 @@ ipv4_scanner_menu() {
 }
 
 # Start Chat Server
-start_chat_server() {
-    echo "Starting the chat server on port $CHAT_PORT..."
+
+# Start a public chat server
+start_public_chat_server() {
+    stop_chat_server 2>/dev/null || true
+    echo "Starting public chat server on port $CHAT_PORT..."
     socat tcp-listen:$CHAT_PORT,reuseaddr,fork exec:'/bin/cat' &
     CHAT_SERVER_PID=$!
-    echo "Chat server started with PID $CHAT_SERVER_PID."
+    echo "Public chat server started with PID $CHAT_SERVER_PID."
+}
+
+# Start a password protected chat server
+start_private_chat_server() {
+    stop_chat_server 2>/dev/null || true
+    read -s -p "Set chat room password: " CHAT_PASSWORD
+    echo
+    cat <<'EOF' > "$RAMDISK_DIR/private_chat_handler.sh"
+#!/bin/bash
+PASS="$1"
+read -r attempt
+if [[ "$attempt" != "$PASS" ]]; then
+    echo "PASSWORD_REQUIRED"
+    exit 0
+fi
+exec cat
+EOF
+    chmod +x "$RAMDISK_DIR/private_chat_handler.sh"
+    socat tcp-listen:$CHAT_PORT,reuseaddr,fork exec:"$RAMDISK_DIR/private_chat_handler.sh $CHAT_PASSWORD" &
+    CHAT_SERVER_PID=$!
+    echo "Private chat server started on port $CHAT_PORT with PID $CHAT_SERVER_PID."
 }
 
 # Enter Chat Room with Nickname
@@ -466,16 +511,7 @@ open_chat_client() {
     CHAT_IP=${CHAT_IP:-127.0.0.1}
     echo "Connecting to the chat room at $CHAT_IP as $NICKNAME..."
 
-    # Custom dark theme
-    COMMAND="telnet $CHAT_IP $CHAT_PORT | tee >(sed \"s/^/[$NICKNAME] /g\")"
-    
-    if command -v gnome-terminal >/dev/null 2>&1; then
-        gnome-terminal -- bash -c "echo -e '\033]10;#FFFFFF\007\033]11;#000000\007'; $COMMAND"
-    elif command -v xterm >/dev/null 2>&1; then
-        xterm -fa 'Monospace' -fs 10 -bg black -fg white -e bash -c "$COMMAND" &
-    else
-        echo "No compatible terminal emulator found! Please install gnome-terminal or xterm."
-    fi
+    start_chat_session "$CHAT_IP" "$NICKNAME"
 }
 
 # Join Another Chat Room
@@ -484,16 +520,8 @@ join_custom_chat_room() {
     read -p "Enter the port of the chat room: " CHAT_PORT
     read -p "Enter your nickname: " NICKNAME
     echo "Connecting to chat room at $CHAT_IP:$CHAT_PORT as $NICKNAME..."
-    
-    COMMAND="telnet $CHAT_IP $CHAT_PORT | tee >(sed \"s/^/[$NICKNAME] /g\")"
-    
-    if command -v gnome-terminal >/dev/null 2>&1; then
-        gnome-terminal -- bash -c "echo -e '\033]10;#FFFFFF\007\033]11;#000000\007'; $COMMAND"
-    elif command -v xterm >/dev/null 2>&1; then
-        xterm -fa 'Monospace' -fs 10 -bg black -fg white -e bash -c "$COMMAND" &
-    else
-        echo "No compatible terminal emulator found! Please install gnome-terminal or xterm."
-    fi
+
+    start_chat_session "$CHAT_IP" "$NICKNAME"
 }
 
 # Stop Chat Server
@@ -665,12 +693,15 @@ main_menu() {
         echo "7. Start VPN"
         echo "8. Scan for Malware/Keyloggers"
         echo "9. Encrypt Data"
-        echo "10. Enter Chat Room"
-        echo "11. Join Another Chat Room"
-        echo "12. Revert to Original Settings"
-        echo "13. IPv4 Scanner"
-        echo "14. Check Dependencies"
-        echo "15. Exit"
+        echo "10. Discover Chat Rooms"
+        echo "11. Host Public Chat Room"
+        echo "12. Host Private Chat Room"
+        echo "13. Enter Chat Room"
+        echo "14. Join Another Chat Room"
+        echo "15. Revert to Original Settings"
+        echo "16. IPv4 Scanner"
+        echo "17. Check Dependencies"
+        echo "18. Exit"
         echo "---------------------------------"
         read -p "Choose an option: " MENU_CHOICE
         case $MENU_CHOICE in
@@ -683,12 +714,15 @@ main_menu() {
             7) start_vpn ;;
             8) scan_for_threats ;;
             9) encrypt_data ;;
-            10) open_chat_client ;;
-            11) join_custom_chat_room ;; 
-            12) revert_to_original ;;
-            13) ipv4_scanner_menu ;;
-            14) check_dependencies ;;
-            15) echo "Exiting. Stay anonymous!"; exit 0 ;;
+            10) chat_room_discovery ;;
+            11) start_public_chat_server ;;
+            12) start_private_chat_server ;;
+            13) open_chat_client ;;
+            14) join_custom_chat_room ;;
+            15) revert_to_original ;;
+            16) ipv4_scanner_menu ;;
+            17) check_dependencies ;;
+            18) echo "Exiting. Stay anonymous!"; exit 0 ;;
             *) echo "Invalid option. Try again." ;;
         esac
     done
@@ -699,5 +733,4 @@ main_menu() {
 # --------------------------------------
 
 display_venetian_mask
-start_chat_server
 main_menu
