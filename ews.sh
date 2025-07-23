@@ -114,7 +114,7 @@ install_dependencies() {
     echo "Installing required tools and dependencies..."
     sudo apt update
     sudo apt install -y openvpn tor proxychains macchanger iptables openssl curl \
-                        cron lynis clamav python3 python3-pip socat telnet gnome-terminal xterm
+                        cron lynis clamav socat telnet gnome-terminal xterm
     echo "Dependencies installed successfully."
 }
 
@@ -122,7 +122,7 @@ install_dependencies() {
 check_dependencies() {
     local missing=()
     local deps=(openvpn tor proxychains macchanger iptables openssl curl \
-                cron lynis clamscan python3 socat telnet gnome-terminal xterm)
+                cron lynis clamscan socat telnet gnome-terminal xterm)
 
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" >/dev/null 2>&1; then
@@ -175,18 +175,46 @@ range_to_cidr() {
         return
     fi
 
-    # Convert the range to CIDR blocks using Python
-    python3 - <<EOF
-import ipaddress
+    # Helper to convert IP to integer
+    ip_to_int() {
+        local IFS=.
+        read -r a b c d <<< "$1"
+        echo $(( (a<<24) | (b<<16) | (c<<8) | d ))
+    }
 
-try:
-    start = ipaddress.IPv4Address("$start_ip")
-    end = ipaddress.IPv4Address("$end_ip")
-    cidrs = ipaddress.summarize_address_range(start, end)
-    print(" ".join(str(cidr) for cidr in cidrs))
-except ValueError:
-    print("")
-EOF
+    # Helper to convert integer back to IP
+    int_to_ip() {
+        local ip=$1
+        printf "%d.%d.%d.%d" \
+            $(( (ip>>24) & 255 )) \
+            $(( (ip>>16) & 255 )) \
+            $(( (ip>>8) & 255 )) \
+            $(( ip & 255 ))
+    }
+
+    local start=$(ip_to_int "$start_ip")
+    local end=$(ip_to_int "$end_ip")
+    local cidrs=()
+
+    while (( start <= end )); do
+        local max=32
+        while (( max > 0 )); do
+            local mask=$(( 0xffffffff << (32 - (max - 1)) & 0xffffffff ))
+            if (( (start & mask) != start )); then
+                break
+            fi
+            local last=$(( start + (1 << (32 - (max - 1))) - 1 ))
+            if (( last > end )); then
+                break
+            fi
+            max=$(( max - 1 ))
+        done
+        local prefix=$(( max ))
+        cidrs+=( "$(int_to_ip $start)/$prefix" )
+        start=$(( start + (1 << (32 - prefix)) ))
+    done
+
+    echo "${cidrs[*]}"
 }
 
 # Scan Selected IP Range
@@ -692,7 +720,7 @@ revert_to_original() {
     echo "Reverting to original settings..."
     echo "Removing dependencies..."
     sudo apt remove --purge -y openvpn tor proxychains macchanger iptables openssl curl \
-                          cron lynis clamav python3 python3-pip socat telnet gnome-terminal xterm
+                          cron lynis clamav socat telnet gnome-terminal xterm
     echo "Dependencies removed."
     echo "Flushing iptables rules..."
     sudo iptables -F
